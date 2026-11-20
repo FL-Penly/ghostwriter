@@ -709,7 +709,7 @@ final class CompletionCoordinator {
         guard rule.completionsEnabled != false, isOnEverywhere else { return false }
         if forced { return true }
         if isBrieflyPaused { return false }
-        if InputSource.isInputMethodActive { return false }
+        if InputSource.isInputMethodActive, snapshot.mayBeComposing { return false }
         if power.isOnBattery, preferences.batteryOnDemandOnly { return false }
         if snapshot.isSingleWord { return false }
         if snapshot.isMidLine, !(rule.midLineEnabled ?? preferences.midLineEnabled) { return false }

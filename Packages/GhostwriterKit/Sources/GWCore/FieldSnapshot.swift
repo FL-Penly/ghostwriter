@@ -119,6 +119,13 @@ public struct FieldSnapshot: Sendable, Hashable {
         !textBefore.unicodeScalars.contains { $0.properties.isWhitespace || Self.isWrittenWithoutSpaces($0) }
     }
 
+    /// While an input method is active, Latin letters right before the caret are most likely still being
+    /// composed (pinyin, romaji, ...). Committed CJK text or punctuation there means the input method is idle.
+    public var mayBeComposing: Bool {
+        guard let last = textBefore.unicodeScalars.last else { return false }
+        return last.isASCII && last.properties.isAlphabetic
+    }
+
     private static func isWrittenWithoutSpaces(_ scalar: Unicode.Scalar) -> Bool {
         switch scalar.value {
         case 0x0E00...0x0EFF, 0x1000...0x109F, 0x1780...0x17FF, 0x3040...0x30FF, 0x3400...0x4DBF, 0x4E00...0x9FFF,
