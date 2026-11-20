@@ -11,6 +11,54 @@ public enum InputSource {
             Unmanaged<CFString>.fromOpaque(property).takeUnretainedValue() as String != kTISTypeKeyboardLayout as String
         }
     }
+
+    public enum Composition: Equatable, Sendable {
+        /// A keyboard layout is selected, so every key types its character.
+        case none
+        /// An input method is selected but shows no candidates: it passes keys through (an English mode) or
+        /// has just committed its text.
+        case idle
+        /// The input method shows its candidate window, so typed keys go to it, not to the field.
+        case composing
+        /// An input method is selected but its process or windows cannot be found.
+        case unknown
+    }
+
+    /// Whether the selected input method is composing text, judged by its candidate window being on screen.
+    /// Input methods show composed text in the app (marked text) or only in their own window, and some have an
+    /// English mode that keeps the input source but types letters directly, so the field text alone cannot tell.
+    @MainActor
+    public static var composition: Composition {
+        guard let source = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue() else { return .none }
+        return withExtendedLifetime(source) {
+            guard let type = TISGetInputSourceProperty(source, kTISPropertyInputSourceType),
+                  Unmanaged<CFString>.fromOpaque(type).takeUnretainedValue() as String
+                  != kTISTypeKeyboardLayout as String
+            else { return .none }
+            guard let id = TISGetInputSourceProperty(source, kTISPropertyBundleID) else { return .unknown }
+            let bundleID = Unmanaged<CFString>.fromOpaque(id).takeUnretainedValue() as String
+            let owners = Set(NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).map(\.processIdentifier))
+            guard !owners.isEmpty,
+                  let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
+                  as? [[String: Any]]
+            else { return .unknown }
+            return showsCandidates(windows, owners: owners) ? .composing : .idle
+        }
+    }
+
+    /// A candidate window is an input method's visible window floating above normal windows, big enough to hold
+    /// candidates (small ones are mode indicators that flash after switching).
+    static func showsCandidates(_ windows: [[String: Any]], owners: Set<pid_t>) -> Bool {
+        windows.contains { window in
+            guard let owner = window[kCGWindowOwnerPID as String] as? pid_t, owners.contains(owner),
+                  let layer = window[kCGWindowLayer as String] as? Int, layer >= Int(CGWindowLevelForKey(.statusWindow)),
+                  (window[kCGWindowAlpha as String] as? Double ?? 1) > 0,
+                  let bounds = window[kCGWindowBounds as String] as? [String: Any],
+                  let rect = CGRect(dictionaryRepresentation: bounds as CFDictionary)
+            else { return false }
+            return rect.width >= 40 && rect.height >= 20
+        }
+    }
 }
 
 public enum KeyboardLayout {

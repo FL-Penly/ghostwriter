@@ -70,6 +70,7 @@ final class CompletionCoordinator {
     private var editedSinceRead = false
     private var terminalSpaces: (visible: String, spaces: String)?
     private var deleteSettle: Task<Void, Never>?
+    private var compositionRetry: Task<Void, Never>?
     private var charactersSinceExamples = 0
     private var acceptWatchdog: Task<Void, Never>?
     private var followers: (language: String?, value: [String: [String: Double]])?
@@ -275,6 +276,7 @@ final class CompletionCoordinator {
     private func leaveField() {
         recorder.finish()
         autoSelectionTask?.cancel()
+        compositionRetry?.cancel()
         typoCheck?.cancel()
         clearAutoFixUndo()
         endDeleting()
@@ -427,6 +429,12 @@ final class CompletionCoordinator {
             selectionActions.dismiss()
         }
         switch event.kind {
+        case .character where InputSource.composition == .composing:
+            // The input method takes the key, and the field changes only once it commits.
+            lastTyping = .now
+            typedTail = ""
+            hideSuggestion()
+            scheduleRefresh()
         case .character:
             lastTyping = .now
             typedSinceRead += event.characters
@@ -709,12 +717,36 @@ final class CompletionCoordinator {
         guard rule.completionsEnabled != false, isOnEverywhere else { return false }
         if forced { return true }
         if isBrieflyPaused { return false }
-        if InputSource.isInputMethodActive, snapshot.mayBeComposing { return false }
+        switch InputSource.composition {
+        case .composing:
+            retryAfterComposition(snapshot)
+            return false
+        case .unknown where snapshot.mayBeComposing:
+            return false
+        case .none, .idle, .unknown:
+            break
+        }
         if power.isOnBattery, preferences.batteryOnDemandOnly { return false }
         if snapshot.isSingleWord { return false }
         if snapshot.isMidLine, !(rule.midLineEnabled ?? preferences.midLineEnabled) { return false }
         let currentLine = snapshot.textBefore.split(separator: "\n", omittingEmptySubsequences: false).last ?? ""
         return currentLine.contains(where: \.isLetter)
+    }
+
+    /// The read that follows a commit can come while the input method still shows its candidate window, and the
+    /// reads after it find the same text, so the request is retried once the window closes.
+    private func retryAfterComposition(_ snapshot: FieldSnapshot) {
+        compositionRetry?.cancel()
+        compositionRetry = Task { [weak self] in
+            for _ in 0..<10 {
+                try? await Task.sleep(for: .milliseconds(80))
+                guard !Task.isCancelled, let self, let field = self.field, field == snapshot else { return }
+                if InputSource.composition != .composing {
+                    self.requestCompletion(for: field)
+                    return
+                }
+            }
+        }
     }
 
     private var isBrieflyPaused: Bool {
@@ -852,6 +884,8 @@ final class CompletionCoordinator {
         guard let current = field, current.id == snapshot.id, !candidates.isEmpty, emoji == nil, !editedSinceRead,
               Self.restOfLine(current.textAfter) == Self.restOfLine(snapshot.textAfter) else { return }
         if case .typos = suggestion?.kind { return }
+        // Composition can start after the request did; a suggestion would cover the input method's text.
+        if kind == .completion, InputSource.composition == .composing { return }
         let textBefore = current.textBefore + typedSinceRead
         let fresh = ActiveSuggestion(fieldID: snapshot.id, anchor: snapshot.textBefore, candidates: candidates, kind: kind)
         guard var next = fresh.advanced(to: textBefore) else { return }

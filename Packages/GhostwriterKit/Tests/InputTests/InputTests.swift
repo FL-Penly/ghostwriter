@@ -241,3 +241,44 @@ import Testing
         #expect(code == 10 || code == 50)
     }
 }
+
+@Suite struct CandidateWindowTests {
+    private let ime: pid_t = 1088
+
+    /// Window info as CGWindowListCopyWindowInfo reports it; the defaults are Doubao's candidate window.
+    private func window(
+        owner: pid_t = 1088, layer: Int = 2_147_483_628, alpha: Double = 1,
+        width: Double = 494, height: Double = 64
+    ) -> [String: Any] {
+        [
+            kCGWindowOwnerPID as String: owner,
+            kCGWindowLayer as String: layer,
+            kCGWindowAlpha as String: alpha,
+            kCGWindowBounds as String: ["X": 781.0, "Y": 955.0, "Width": width, "Height": height],
+        ]
+    }
+
+    @Test func inputMethodCandidateWindowMeansComposing() {
+        #expect(InputSource.showsCandidates([window()], owners: [ime]))
+    }
+
+    @Test func otherAppsWindowsAreNotCandidates() {
+        #expect(!InputSource.showsCandidates([window(owner: 42)], owners: [ime]))
+    }
+
+    @Test func noWindowOnScreenMeansIdle() {
+        #expect(!InputSource.showsCandidates([], owners: [ime]))
+    }
+
+    @Test func transparentWindowIsHidden() {
+        #expect(!InputSource.showsCandidates([window(alpha: 0)], owners: [ime]))
+    }
+
+    @Test func modeIndicatorIsNotACandidateWindow() {
+        #expect(!InputSource.showsCandidates([window(width: 28, height: 28)], owners: [ime]))
+    }
+
+    @Test func toolbarAtANormalLevelIsNotACandidateWindow() {
+        #expect(!InputSource.showsCandidates([window(layer: 3, width: 273, height: 75)], owners: [ime]))
+    }
+}
