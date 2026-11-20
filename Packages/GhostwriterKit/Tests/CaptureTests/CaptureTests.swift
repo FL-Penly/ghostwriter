@@ -268,6 +268,18 @@ import Testing
             #expect(!snapshot(text).isSingleWord, "\(text)")
         }
     }
+
+    @Test func latinLettersAtTheCaretMayBeComposing() {
+        for text in ["现在我准备xian", "我想 zai", "今日はkyou", "a"] {
+            #expect(snapshot(text).mayBeComposing, "\(text)")
+        }
+    }
+
+    @Test func committedTextIsNotComposing() {
+        for text in ["", "现在我准备", "我想，", "今日は", "你好 ", "hello.", "第3"] {
+            #expect(!snapshot(text).mayBeComposing, "\(text)")
+        }
+    }
 }
 
 @Suite struct EmptyLineCaretTests {
