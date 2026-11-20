@@ -96,11 +96,11 @@ enum AppCatalog {
     static let terminals: Set<String> = [
         "com.apple.Terminal", "com.googlecode.iterm2", "dev.warp.Warp-Stable", "com.mitchellh.ghostty",
         "com.mitchellh.ghostty.debug", "org.alacritty", "io.alacritty", "net.kovidgoyal.kitty", "com.github.wez.wezterm",
-        "co.zeit.hyper", "org.tabby", "com.cmuxterm.app",
+        "co.zeit.hyper", "org.tabby", "com.cmuxterm.app", "sb.moe.herdrm", "dev.local.herdrmx",
     ]
 
     /// Terminals whose screen text and character bounds are readable, so a coding agent's input box can be found.
-    static let agentPromptTerminals: Set<String> = ["com.apple.Terminal"]
+    static let agentPromptTerminals: Set<String> = ["com.apple.Terminal", "sb.moe.herdrm", "dev.local.herdrmx"]
 
     static let orca = "com.stablyai.orca"
 
