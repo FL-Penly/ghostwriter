@@ -94,6 +94,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             glyph = CountGlyph.image(text: countText(count))
             glyph.accessibilityDescription = "Ghostwriter, \(count.formatted()) words saved today"
         } else if let asset = NSImage(named: "MenuBarIcon") {
+            // The asset catalog marks it as a template; a build without actool loads the bare SVG, which is not.
+            asset.isTemplate = true
             glyph = asset
             glyph.accessibilityDescription = "Ghostwriter"
         } else {
@@ -172,7 +174,9 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         menu.addItem(.separator())
         let settings = actionItem("Settings\u{2026}", #selector(openSettings))
         settings.keyEquivalent = ","
+        #if canImport(AppKit, _version: 2700)
         if #available(macOS 27, *) { settings.preferredImageVisibility = .hidden }
+        #endif
         menu.addItem(settings)
         if showsExtras {
             let updates = actionItem("Check for Updates\u{2026}", #selector(checkForUpdates))
