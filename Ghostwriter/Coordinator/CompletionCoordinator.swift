@@ -277,6 +277,7 @@ final class CompletionCoordinator {
         recorder.finish()
         autoSelectionTask?.cancel()
         compositionRetry?.cancel()
+        compositionRetry = nil
         typoCheck?.cancel()
         clearAutoFixUndo()
         endDeleting()
@@ -736,12 +737,15 @@ final class CompletionCoordinator {
     /// The read that follows a commit can come while the input method still shows its candidate window, and the
     /// reads after it find the same text, so the request is retried once the window closes.
     private func retryAfterComposition(_ snapshot: FieldSnapshot) {
+        if compositionRetry == nil { Self.log.info("Input method is composing; suggestions wait for its commit") }
         compositionRetry?.cancel()
         compositionRetry = Task { [weak self] in
+            defer { if !Task.isCancelled { self?.compositionRetry = nil } }
             for _ in 0..<10 {
                 try? await Task.sleep(for: .milliseconds(80))
                 guard !Task.isCancelled, let self, let field = self.field, field == snapshot else { return }
                 if InputSource.composition != .composing {
+                    Self.log.info("Input method committed; suggesting")
                     self.requestCompletion(for: field)
                     return
                 }
