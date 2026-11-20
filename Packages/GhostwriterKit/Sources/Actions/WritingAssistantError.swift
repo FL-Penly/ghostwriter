@@ -42,11 +42,14 @@ public enum WritingAssistantError: LocalizedError, Sendable, Equatable {
 
     static func from(_ error: any Error) -> any Error {
         if error is WritingAssistantError || error is CancellationError { return error }
+        #if canImport(FoundationModels, _version: 2)
         if #available(macOS 27, *), let mapped = fromCurrent(error) { return mapped }
+        #endif
         if let generation = error as? LanguageModelSession.GenerationError { return from(generation) }
         return WritingAssistantError.failed(error.localizedDescription)
     }
 
+    #if canImport(FoundationModels, _version: 2)
     @available(macOS 27, *)
     private static func fromCurrent(_ error: any Error) -> WritingAssistantError? {
         if let error = error as? LanguageModelError {
@@ -65,6 +68,7 @@ public enum WritingAssistantError: LocalizedError, Sendable, Equatable {
         }
         return nil
     }
+    #endif
 
     private static func from(_ error: LanguageModelSession.GenerationError) -> WritingAssistantError {
         switch error {

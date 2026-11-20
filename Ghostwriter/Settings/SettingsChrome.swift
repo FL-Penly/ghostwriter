@@ -1,9 +1,24 @@
 import AppKit
 import SwiftUI
 
+private struct SettingsMatchesKey: EnvironmentKey {
+    static let defaultValue: [String] = []
+}
+
+private struct ReplayOnboardingKey: EnvironmentKey {
+    static let defaultValue: @MainActor () -> Void = {}
+}
+
 extension EnvironmentValues {
-    @Entry var settingsMatches: [String] = []
-    @Entry var replayOnboarding: @MainActor () -> Void = {}
+    var settingsMatches: [String] {
+        get { self[SettingsMatchesKey.self] }
+        set { self[SettingsMatchesKey.self] = newValue }
+    }
+
+    var replayOnboarding: @MainActor () -> Void {
+        get { self[ReplayOnboardingKey.self] }
+        set { self[ReplayOnboardingKey.self] = newValue }
+    }
 }
 
 struct SettingText {

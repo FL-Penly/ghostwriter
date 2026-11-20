@@ -131,10 +131,25 @@ public struct WritingAssistant: Sendable {
     }
 }
 
-@Generable
-struct Alternatives {
-    @Guide(description: "Replacement words or short phrases, best first", .maximumCount(8))
+struct Alternatives: Generable {
     var items: [String]
+
+    static var generationSchema: GenerationSchema {
+        GenerationSchema(type: Self.self, properties: [
+            .init(
+                name: "items", description: "Replacement words or short phrases, best first", type: [String].self,
+                guides: [.maximumCount(8)]
+            ),
+        ])
+    }
+
+    init(_ content: GeneratedContent) throws {
+        items = try content.value(forProperty: "items")
+    }
+
+    var generatedContent: GeneratedContent {
+        GeneratedContent(properties: ["items": items])
+    }
 
     static func cleaned(_ items: [String], original: String) -> [String] {
         var seen: Set<String> = [original.lowercased()]

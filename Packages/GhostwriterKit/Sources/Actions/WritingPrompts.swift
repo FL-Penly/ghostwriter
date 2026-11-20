@@ -29,7 +29,11 @@ enum WritingPrompts {
         }
         switch action {
         case .fixGrammar, .translate:
+            #if canImport(FoundationModels, _version: 2)
             return GenerationOptions(samplingMode: .greedy, maximumResponseTokens: budget)
+            #else
+            return GenerationOptions(sampling: .greedy, maximumResponseTokens: budget)
+            #endif
         case .rephrase:
             return GenerationOptions(temperature: 0.5, maximumResponseTokens: budget)
         case .shorten, .expand, .formal, .casual:
