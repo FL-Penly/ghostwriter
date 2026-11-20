@@ -11,9 +11,11 @@ struct FoundationSuggester: Suggester {
     static func load(maxWords: Int) async throws -> FoundationSuggester {
         let model = SystemLanguageModel(guardrails: .permissiveContentTransformations)
         guard model.isAvailable else { throw UsageError("Apple's on-device model is unavailable: \(model.availability)") }
+        #if canImport(FoundationModels, _version: 2)
         if #available(macOS 27.0, *) {
             print("model \(model.variant.displayName), context \(model.contextSize) tokens")
         }
+        #endif
         return FoundationSuggester(maxWords: maxWords, model: model)
     }
 
@@ -27,7 +29,7 @@ struct FoundationSuggester: Suggester {
         do {
             reply = try await session.respond(
                 to: Self.prompt(row: row, before: before),
-                options: GenerationOptions(samplingMode: .greedy, maximumResponseTokens: 4 * maxWords + 4)
+                options: Self.options(maxWords: maxWords)
             ).content
         } catch let error as LanguageModelSession.GenerationError {
             FileHandle.standardError.write(Data("\(row.id): no suggestion: \(error.localizedDescription)\n".utf8))
@@ -35,6 +37,14 @@ struct FoundationSuggester: Suggester {
         }
         let text = Self.fitted(reply, after: before, maxWords: maxWords)
         return text.isEmpty ? [] : [Candidate(text: text, score: 0)]
+    }
+
+    private static func options(maxWords: Int) -> GenerationOptions {
+        #if canImport(FoundationModels, _version: 2)
+        GenerationOptions(samplingMode: .greedy, maximumResponseTokens: 4 * maxWords + 4)
+        #else
+        GenerationOptions(sampling: .greedy, maximumResponseTokens: 4 * maxWords + 4)
+        #endif
     }
 
     static func instructions(maxWords: Int) -> String {

@@ -1,6 +1,6 @@
 import Foundation
 import Inference
-import Synchronization
+import os
 
 enum SwapMode: String {
     case none
@@ -89,8 +89,9 @@ private struct SwapRow {
         await engine.clearCache()
         for await _ in engine.suggestions(for: try request(typed: 0, new: false)).updates {}
 
-        let shown = Mutex<[Shown]>([])
-        let ready = Mutex<Double?>(nil)
+        // Copyable and Sendable, so the listener tasks can share them (older compilers reject a captured Mutex).
+        let shown = OSAllocatedUnfairLock<[Shown]>(initialState: [])
+        let ready = OSAllocatedUnfairLock<Double?>(initialState: nil)
         let start = ContinuousClock.now
         var listeners: [Task<Void, Never>] = []
         var staging: Task<Void, Never>?

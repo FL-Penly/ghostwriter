@@ -1,4 +1,5 @@
 import Foundation
+import os
 import Synchronization
 import Testing
 @testable import Inference
@@ -368,7 +369,8 @@ import Testing
         var generator = SplitMix(seed: 7)
         var text = "i saw the"
         var stages = 0
-        let staged = Atomic<Int>(0)
+        // Copyable and Sendable, so the staging tasks can share it (older compilers reject a captured Atomic).
+        let staged = OSAllocatedUnfairLock(initialState: 0)
         let pieces = [" quick", " q", "u", " lazy", " dog", ".", " a", " red", " c", "at", " ", " then"]
         for _ in 0..<120 {
             switch generator.next() % 10 {
@@ -385,12 +387,12 @@ import Testing
                 stages += 1
                 Task {
                     _ = await toy.engine.stage(prompt: prompt)
-                    staged.add(1, ordering: .relaxed)
+                    staged.withLock { $0 += 1 }
                 }
             }
             _ = subscription
         }
-        while staged.load(ordering: .relaxed) < stages {
+        while staged.withLock({ $0 }) < stages {
             if await toy.engine.runUnit() == nil { await Task.yield() }
         }
         while await toy.engine.runUnit() != nil {}
