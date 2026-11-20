@@ -188,9 +188,10 @@ struct FieldReader {
 
     func read(_ context: FieldContext, diagnostics: inout ReadDiagnostics) throws(AXFailure) -> ReadResult {
         if context.kind == .terminal {
-            return app.identity.bundleID == AppCatalog.orca
-                ? try readOrcaPrompt(context)
-                : try readTerminalPrompt(context, diagnostics: &diagnostics)
+            let bundleID = app.identity.bundleID
+            if bundleID == AppCatalog.orca { return try readOrcaPrompt(context) }
+            if AppCatalog.gridTerminals.contains(bundleID) { return try readGridTerminalPrompt(context, diagnostics: &diagnostics) }
+            return try readTerminalPrompt(context, diagnostics: &diagnostics)
         }
         let element = context.element
         let attributes = try element.values([
@@ -264,12 +265,33 @@ struct FieldReader {
             screen = screen.substring(from: newline.location + 1) as NSString
             start += newline.location + 1
         }
-        let cursor = AXDecode.range(attributes[kAXSelectedTextRangeAttribute]).map { $0.location - start }
+        let countsUTF16Columns = AppCatalog.utf16ColumnTerminals.contains(app.identity.bundleID)
+        var cursor = AXDecode.range(attributes[kAXSelectedTextRangeAttribute]).map { $0.location - start }
+        if countsUTF16Columns, let offset = cursor, offset >= 0, offset <= screen.length {
+            // The cursor offset is the cursor's cell column counted as UTF-16 units of its row, clamped to the
+            // row's end. At the end it stays there: that is where a draft is typed.
+            let row = Self.row(containing: offset, in: screen)
+            if offset - row.location < row.length {
+                cursor = row.location + TerminalCells.offset(ofColumn: offset - row.location, in: screen.substring(with: row))
+            }
+        }
         guard let prompt = TerminalAgentPrompt.find(in: screen as String, cursor: cursor) else {
             return .ineligible(.terminalShell)
         }
         let anchorRange = NSRange(location: start + prompt.anchor.location, length: prompt.anchor.length)
-        guard let anchor = try cellBounds(element, anchorRange) else { return .ineligible(.unreadable) }
+        guard var anchor = try cellBounds(element, anchorRange) else { return .ineligible(.unreadable) }
+        if countsUTF16Columns {
+            // Bounds count columns as UTF-16 units too, so after a wide character they land left of the glyph.
+            let row = Self.row(containing: prompt.anchor.location, in: screen)
+            let before = screen.substring(with: NSRange(location: row.location, length: prompt.anchor.location - row.location))
+            let columns = TerminalAgentPrompt.columns(before)
+            if columns != (before as NSString).length,
+               let first = try cellBounds(element, NSRange(location: start + row.location, length: 1)) {
+                let cells = TerminalAgentPrompt.columns(screen.substring(with: prompt.anchor))
+                anchor.origin.x = TerminalCells.x(ofColumn: columns, firstCell: first)
+                anchor.size.width = CGFloat(cells) * first.width
+            }
+        }
         diagnostics.caretSource = .previousCharacter
         let caret = CGRect(x: anchor.maxX, y: anchor.minY, width: 1, height: anchor.height)
         let draftStart = try prompt.draftStart.flatMap { offset throws(AXFailure) in
@@ -294,6 +316,100 @@ struct FieldReader {
             windowTitle: context.windowTitle,
             transcript: prompt.transcript
         ))
+    }
+
+    /// The row of `screen` holding UTF-16 `offset`, without its newline.
+    private static func row(containing offset: Int, in screen: NSString) -> NSRange {
+        let before = screen.range(of: "\n", options: .backwards, range: NSRange(location: 0, length: offset))
+        let start = before.location == NSNotFound ? 0 : before.location + 1
+        let after = screen.range(of: "\n", range: NSRange(location: offset, length: screen.length - offset))
+        let end = after.location == NSNotFound ? screen.length : after.location
+        return NSRange(location: start, length: end - start)
+    }
+
+    /// Reads a terminal that reports its text but no character bounds and no cursor (Ghostty). The caret goes at
+    /// the end of the draft, on the cell grid read from the terminal's pty. The grid is exact, so the ghost is drawn
+    /// inline; only the row is inferred (see `TerminalCells.cell`).
+    private func readGridTerminalPrompt(_ context: FieldContext, diagnostics: inout ReadDiagnostics) throws(AXFailure) -> ReadResult {
+        let element = context.element
+        let attributes = try element.values([kAXNumberOfCharactersAttribute, kAXPositionAttribute, kAXSizeAttribute])
+        guard let count = AXDecode.int(attributes[kAXNumberOfCharactersAttribute]), count > 0,
+              let frame = Self.frame(attributes)
+        else { return .ineligible(.terminalShell) }
+        guard let grid = TerminalCells.grid(frame: frame, sizes: TerminalCells.windowSizes(of: app.identity.pid)) else {
+            return .ineligible(.unreadable)
+        }
+        let length = try Self.utf16Length(element, atLeast: count)
+        var start = max(0, length - Self.terminalTail)
+        var tail: NSString?
+        // A start inside a character cluster reads nothing; one of the next units before it begins the cluster.
+        for shift in 0..<4 where tail == nil && start - shift >= 0 {
+            tail = try TextExtractor.string(element, CFRange(location: start - shift, length: length - start + shift))
+            if tail != nil { start -= shift }
+        }
+        guard var screen = tail else { return .ineligible(.unreadable) }
+        diagnostics.textPath = .stringForRange
+        let isWholeScreen = start == 0
+        if start > 0 {
+            let newline = screen.range(of: "\n")
+            guard newline.location != NSNotFound else { return .ineligible(.terminalShell) }
+            screen = screen.substring(from: newline.location + 1) as NSString
+        }
+        guard let prompt = TerminalAgentPrompt.find(in: screen as String, cursor: nil) else {
+            return .ineligible(.terminalShell)
+        }
+        diagnostics.caretSource = .estimate
+        let caretCell = TerminalCells.cell(
+            at: NSMaxRange(prompt.anchor), in: screen, isWholeScreen: isWholeScreen, grid: grid
+        )
+        let cell = grid.rect(row: caretCell.row, column: caretCell.column)
+        let caret = CGRect(x: cell.minX, y: cell.minY, width: 1, height: cell.height)
+        let draftStart = prompt.draftStart.map { offset in
+            let cell = TerminalCells.cell(at: offset, in: screen, isWholeScreen: isWholeScreen, grid: grid)
+            return grid.rect(row: cell.row, column: cell.column)
+        } ?? caret
+        let right = max(grid.origin.x + CGFloat(grid.columns) * grid.cell.width, caret.maxX)
+        let fieldFrame = CGRect(
+            x: draftStart.minX, y: draftStart.minY, width: right - draftStart.minX, height: caret.maxY - draftStart.minY
+        )
+
+        return .field(FieldSnapshot(
+            id: FieldID(pid: app.identity.pid, elementHash: element.cfHash),
+            app: app.identity,
+            textBefore: prompt.textBefore,
+            textAfter: prompt.textAfter,
+            caretRect: caret,
+            fieldFrame: fieldFrame,
+            style: FieldStyle(fontName: Self.terminalFont),
+            kind: .terminal,
+            direction: FieldClassifier.direction(before: prompt.textBefore, after: prompt.textAfter),
+            windowTitle: context.windowTitle,
+            transcript: prompt.transcript
+        ))
+    }
+
+    /// Ghostty counts characters (clusters) for `AXNumberOfCharacters` but takes UTF-16 ranges, so its text runs
+    /// past the count when it holds characters longer than one unit. The end is found by probing.
+    private static func utf16Length(_ element: AXElement, atLeast count: Int) throws(AXFailure) -> Int {
+        func reaches(_ end: Int) throws(AXFailure) -> Bool {
+            guard let parameter = AXDecode.rangeValue(CFRange(location: end - 1, length: 1)) else { return false }
+            return AXDecode.string(try element.parameterized(kAXStringForRangeParameterizedAttribute, parameter)) != nil
+        }
+        guard try reaches(count + 1) else { return count }
+        var low = count + 1
+        var step = 16
+        var high = low + step
+        while try reaches(high) {
+            low = high
+            step *= 2
+            high = low + step
+            if step > 1 << 20 { return low }
+        }
+        while high - low > 1 {
+            let middle = (low + high) / 2
+            if try reaches(middle) { low = middle } else { high = middle }
+        }
+        return low
     }
 
     /// Orca draws its terminal on a canvas, so the text comes from Orca itself. xterm.js keeps its hidden input at the

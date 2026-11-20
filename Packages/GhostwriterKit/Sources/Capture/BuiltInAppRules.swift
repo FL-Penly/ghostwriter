@@ -99,8 +99,17 @@ enum AppCatalog {
         "co.zeit.hyper", "org.tabby", "com.cmuxterm.app", "sb.moe.herdrm", "dev.local.herdrmx",
     ]
 
-    /// Terminals whose screen text and character bounds are readable, so a coding agent's input box can be found.
-    static let agentPromptTerminals: Set<String> = ["com.apple.Terminal", "sb.moe.herdrm", "dev.local.herdrmx"]
+    /// Terminals whose screen text is readable, so a coding agent's input box can be found.
+    static let agentPromptTerminals: Set<String> = Set(["com.apple.Terminal"])
+        .union(utf16ColumnTerminals).union(gridTerminals)
+
+    /// Terminals that count a column as one UTF-16 unit of the row: their cursor offset is a cell column and their
+    /// character bounds after a wide character are off, so the caret is placed from the row's first cell.
+    static let utf16ColumnTerminals: Set<String> = ["sb.moe.herdrm", "dev.local.herdrmx"]
+
+    /// Terminals with no character bounds and no cursor (Ghostty's selected range is the mouse selection), whose
+    /// caret is placed on a cell grid read from their ptys' window sizes.
+    static let gridTerminals: Set<String> = ["com.mitchellh.ghostty", "com.mitchellh.ghostty.debug"]
 
     static let orca = "com.stablyai.orca"
 
